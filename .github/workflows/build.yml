@@ -113,7 +113,6 @@ jobs:
 
       - name: Create Manifest
         id: create-manifest
-        if: ${{ ! contains( env.RELEASE_TAG, '.' ) }}
         shell: bash
         run:  |
               echo "Creating manifest ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} ..."
@@ -123,7 +122,6 @@ jobs:
 
       - name: Push Manifest
         id: push-manifest
-        if: ${{ ! contains( env.RELEASE_TAG, '.' ) }}
         uses: redhat-actions/push-to-registry@v2
         with:
           image: ${{ env.IMAGE_NAME }}
