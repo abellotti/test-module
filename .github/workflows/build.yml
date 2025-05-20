@@ -1,4 +1,3 @@
-
 name: Build Container Image
 
 on:
@@ -7,7 +6,7 @@ on:
     tags:
       - '*'
   pull_request:
-    branches: [main, 'release/*']
+    branches: [ main ]
 
 env:
   # Forks that do not set secrets and override the variables may fail build steps using them.
@@ -18,35 +17,35 @@ env:
   IMAGE_NAME: ${{ vars.IMAGE_NAME || 'abellott/test-module' }}
   REGISTRY: ${{ vars.REGISTRY || 'quay.io' }}
 
+
 jobs:
   build-amd64:
     runs-on: ubuntu-latest
 
     steps:
       - name: Clone repository
-        uses: actions/checkout@v2
+        id: clone-repository-amd64
+        uses: actions/checkout@v4.2.2
         with:
           fetch-depth: 0  # fetches all commits/tags
 
-      - name: Define Release Tag Amd64
-        id: define-release-tag-amd64
-        shell: bash
-        run: echo "RELEASE_TAG_AMD64=$([[ ${GITHUB_REF_NAME} =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] && echo ${GITHUB_REF_NAME%.[0-9]*}-amd64 || echo)" >> "$GITHUB_ENV"
-
-      - name: Build Amd64 quipucords image
+      - name: Build amd64 image
         id: build-image-amd64
         uses: redhat-actions/buildah-build@v2
         with:
           image: ${{ env.IMAGE_NAME }}
           archs: amd64
-          tags: ${{ env.STABLE_TAG != 'main' && format('{0}-amd64', env.STABLE_TAG) || 'latest-amd64' }} ${{ contains( env.RELEASE_TAG_AMD64 , '.' ) && env.RELEASE_TAG_AMD64 || '' }}
+          tags: ${{ env.STABLE_TAG != 'main' && format('{0}-amd64', env.STABLE_TAG) || 'latest-amd64' }}
           containerfiles: |
             ./Containerfile
           labels: |
             ${{ env.EXPIRATION_LABEL }}
-            quipucords.backend.git_sha=${{ github.sha }}
+            quipucords.frontend.git_sha=${{ github.sha }}
+          extra-args: |
+            --ulimit nofile=4096:4096
 
-      - name: Push Amd64 To quay.io
+      - name: Push amd64 To quay.io
+        id: push-image-amd64
         uses: redhat-actions/push-to-registry@v2
         with:
           image: ${{ env.IMAGE_NAME }}
@@ -60,29 +59,28 @@ jobs:
 
     steps:
       - name: Clone repository
-        uses: actions/checkout@v2
+        id: clone-repository-arm64
+        uses: actions/checkout@v4.2.2
         with:
           fetch-depth: 0  # fetches all commits/tags
 
-      - name: Define Release Tag Arm64
-        id: define-release-tag-arm64
-        shell: bash
-        run: echo "RELEASE_TAG_ARM64=$([[ ${GITHUB_REF_NAME} =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] && echo ${GITHUB_REF_NAME%.[0-9]*}-arm64 || echo)" >> "$GITHUB_ENV"
-
-      - name: Build Arm64 quipucords image
+      - name: Build arm64 image
         id: build-image-arm64
         uses: redhat-actions/buildah-build@v2
         with:
           image: ${{ env.IMAGE_NAME }}
           archs: arm64
-          tags: ${{ env.STABLE_TAG != 'main' && format('{0}-arm64', env.STABLE_TAG) || 'latest-arm64' }} ${{ contains( env.RELEASE_TAG_ARM64 , '.' ) && env.RELEASE_TAG_ARM64 || '' }}
+          tags: ${{ env.STABLE_TAG != 'main' && format('{0}-arm64', env.STABLE_TAG) || 'latest-arm64' }}
           containerfiles: |
             ./Containerfile
           labels: |
             ${{ env.EXPIRATION_LABEL }}
-            quipucords.backend.git_sha=${{ github.sha }}
+            quipucords.frontend.git_sha=${{ github.sha }}
+          extra-args: |
+            --ulimit nofile=4096:4096
 
-      - name: Push Arm64 To quay.io
+      - name: Push arm64 To quay.io
+        id: push-image-arm64
         uses: redhat-actions/push-to-registry@v2
         with:
           image: ${{ env.IMAGE_NAME }}
@@ -91,24 +89,20 @@ jobs:
           username: ${{ secrets.QUAYIO_USERNAME }}
           password: ${{ secrets.QUAYIO_PASSWORD }}
 
-  build:
+  push-manifest:
     runs-on: ubuntu-latest
     needs: [build-amd64, build-arm64]
 
     steps:
-      - name: Define Release Tag
-        id: define-release-tag
-        shell: bash
-        run: |
-             echo "RELEASE_TAG=$([[ ${GITHUB_REF_NAME} =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] && echo ${GITHUB_REF_NAME%.[0-9]*} || echo)" >> "$GITHUB_ENV"
-             echo "RELEASE_TAG=${{ env.RELEASE_TAG }}"
-
       - name: Define Image Tag
         id: define-image-tag
         shell: bash
-        run: |
-             echo "IMAGE_TAG=${{ env.STABLE_TAG == 'main' && 'latest' || contains( env.RELEASE_TAG , '.' ) && env.RELEASE_TAG || env.STABLE_TAG }}" >> "${GITHUB_ENV}"
-             echo "IMAGE_TAG=${{ env.IMAGE_TAG }}"
+        run: echo "IMAGE_TAG=${{ env.STABLE_TAG == 'main' && 'latest' || env.STABLE_TAG }}" >> "${GITHUB_ENV}"
+
+      - name: Define Release Tag
+        id: define-release-tag
+        shell: bash
+        run: echo "RELEASE_TAG=$([[ ${GITHUB_REF_NAME} =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] && echo ${GITHUB_REF_NAME%.[0-9]*} || echo)" >> "$GITHUB_ENV"
 
       - name: Login to Registry
         id: login-to-registry
@@ -139,10 +133,10 @@ jobs:
         if: contains( env.RELEASE_TAG, '.' )
         shell: bash
         run:  |
-              echo "Creating release manifest ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.STABLE_TAG }} ..."
-              buildah manifest create --all ${{ env.IMAGE_NAME }}:${{ env.STABLE_TAG }} \
-                ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.STABLE_TAG }}-amd64 \
-                ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.STABLE_TAG }}-arm64
+              echo "Creating Release manifest ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.RELEASE_TAG }} ..."
+              buildah manifest create --all ${{ env.IMAGE_NAME }}:${{ env.RELEASE_TAG }} \
+                ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}-amd64 \
+                ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}-arm64
 
       - name: Push Release Manifest
         id: push-release-manifest
@@ -150,7 +144,7 @@ jobs:
         uses: redhat-actions/push-to-registry@v2
         with:
           image: ${{ env.IMAGE_NAME }}
-          tags: ${{ env.STABLE_TAG }}
+          tags: ${{ env.RELEASE_TAG }}
           registry: ${{ env.REGISTRY }}
           username: ${{ secrets.QUAYIO_USERNAME }}
           password: ${{ secrets.QUAYIO_PASSWORD }}
